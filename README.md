@@ -5,9 +5,6 @@ The analytical workflow that generated results and figures in the main text focu
 
 Further analyses on additional apoptosis markers presented in the supplementary material (GeneGlobe and the *Drosophila* KEGG pathway) can be reproduced using `apoptosis-Global.Rmd`.
 
-All input files required by the workflows are available in the `inputs/` directory, with the execption of two OrthoFinder files which are available from Dryad (link TBD):
-
-* `Orthogroups_3_19.csv` (11MB)
-* `Orthogroups_GeneCount_3_19.csv`(2.5MB)
+All input files required by the workflows are available in the `inputs/` directory.
 
 Note: The initial execution of either workflow will begin with a time-consuming step (several minutes) to parse the OrthoFinder output and generate an R Object to the working directory that will be read into memory quickly during subsequent executions.
