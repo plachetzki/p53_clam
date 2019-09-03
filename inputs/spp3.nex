@@ -1,0 +1,4 @@
+#NEXUS
+begin trees;
+	tree tree_1 = [&R] ((Monosiga:1.0,Salpingoeca:1.0):14.0,(Mnemiopsis:14.0,(Amphimedon:13.0,(Trichoplax:12.0,((Nematostella:1.0,Hydra:1.0):10.0,(((Strongylocentrotus:1.0,Saccoglossus:1.0):5.0,(Ciona:5.0,(Petromyzon:4.0,(Danio:3.0,(Pelodiscus:2.0,(Homo:1.0,Mus:1.0):1.0):1.0):1.0):1.0):1.0):4.0,(((Lingula:2.0,(Capitella:1.0,Helobdella:1.0):1.0):2.0,(Octopus:3.0,(Lottia:2.0,(Mya:1.0,Crassostrea:1.0):1.0):1.0):1.0):5.0,(Priapulus:8.0,(Caenorhabditis:7.0,(Stegodyphus:6.0,(Daphnia:5.0,(Rhodnius:4.0,(Nasonia:3.0,(Tribolium:2.0,(Drosophila:1.0,Bombyx:1.0):1.0):1.0):1.0):1.0):1.0):1.0):1.0):1.0):1.0):1.0):1.0):1.0):1.0):1.0);
+end;

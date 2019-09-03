@@ -1,0 +1,1270 @@
+---
+title: "Apoptosis-related gene set evolution"
+output: 
+  html_document:
+    df_print: paged
+author: "Sabrina Pankey"
+date: "`r Sys.Date()`"
+editor_options: 
+  chunk_output_type: console
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,warning=FALSE,results="hide", message=FALSE, fig.height=10,fig.width=10)
+
+```
+
+```{r import}
+require(phytools)
+library(dplyr)
+library(reshape2)
+#packageVersion("phytools")
+
+
+fdrcutoff<-0.1
+```
+FDR cut-off for significance is `r fdrcutoff`.
+
+```{r parseOF}
+# parse OrthoFinder format to annotate with Human Gene Symbols
+parse_orthogroups <- function(path_2_ogroups)
+{
+  orthogroups <- scan(path_2_ogroups, what = "",
+                      skip = 1, sep = "\n")
+  
+  ### Not sure why some values are separated by tab in file
+  orthogroups <- gsub("\t", ", ",
+                      orthogroups)
+  
+  orthogroups <- strsplit(orthogroups, ", ")
+  
+  ### names of orthogroup are read in first list element
+  names(orthogroups) <- sapply(orthogroups,
+                               function(i) i[1])
+  orthogroups <- lapply(orthogroups,
+                        function(i) i[-1])
+  
+  ## Dont know why some elements in orthogroups are null ( "" )
+  orthogroups <- lapply(orthogroups,
+                        function(i) i[i != ""])
+  return(orthogroups)
+}
+
+if (!file.exists("meltedOG.Rds")){
+  OGlist<-parse_orthogroups("inputs/Orthogroups_3_19.csv")
+  system("ls")
+  meltedOG<-melt(OGlist)
+  #very slow, save in case R session aborts
+  saveRDS(meltedOG, "meltedOG.Rds")
+  rm(OGlist) #to release memory
+  }else{
+  meltedOG<-readRDS("meltedOG.Rds")
+  } 
+
+#check memory consumption
+for (obj in ls()) { message(obj); print(object.size(get(obj)), units='auto') }
+
+
+library(varhandle)
+library(dplyr)
+meltedOG$value<-unfactor(meltedOG$value) #works
+head(meltedOG)
+str(meltedOG)
+names(meltedOG)<-c("seqid","OG")
+head(meltedOG)
+
+#number of OGs from Orthofinder:
+length(unique(meltedOG$OG))
+
+
+sp<-substring(meltedOG$seqid,first=1,last=4)
+melt2<-cbind(meltedOG,sp)
+melt2 %>% group_by(sp) %>% tally()
+melt2 %>% group_by(OG) %>% tally()
+melt3<-melt2[,c("OG","sp")]; dim(melt3)
+melt3<-melt3[!duplicated(melt3),];dim(melt3)
+summ<- melt3 %>% group_by(OG) %>% tally()
+nrow(summ[which(summ$n>=15),]) #how many OGs have hits in 15 or more taxa
+hist(summ$n,xlab="Number of taxa",ylab="Number of OGs occupied")
+```
+
+```{r map_OrthoFinderIDs_2_humanIDs,eval=F}
+#use Human ref_blastout to subset only apoptosis OGs from OGlist
+#links gene_acc to unique OrthoFinder seqid
+refblast<-read.table("inputs/GGref_Homo_blastout",header=T,stringsAsFactors = F)
+names(refblast)[1:2]<-c("gene_acc","seqid")
+gene_acc_simple<-unlist(strsplit(refblast$gene_acc,split="[.]"))[c(T,F)]
+refblast$gene_acc<-gene_acc_simple
+
+#link gene_acc to gene symbol (human)
+homo_symbols<-read.table("inputs/accs_symbols.txt",header=F,stringsAsFactors = F)
+names(homo_symbols)<-c("symbol","gene_acc")
+
+library(dplyr)
+#link apoptosis gene accs to OGs
+apo_OGs_acc<-inner_join(refblast[,1:2],meltedOG,by="seqid")
+
+#links symbols to apoptosis gene accs and OGs
+apo_OGs_acc_sym<-inner_join(apo_OGs_acc,homo_symbols,by="gene_acc")
+
+```
+
+### Mammalian apoptosis KEGG gene-set, blasted for *Homo* hits
+```{r homoset}
+hblast<-read.table("inputs/Homo_KEGG_blastout.fa_ref_blastout",header=T,stringsAsFactors = F)
+
+names(hblast)[1:2]<-c("gene_acc","seqid")
+gene_acc_simple<-unlist(strsplit(hblast$gene_acc,split="[.]"))[c(T,F)]
+hblast$gene_acc<-gene_acc_simple
+
+
+
+homo_apo_OGs_acc<-dplyr::inner_join(hblast[,1:2],meltedOG,by="seqid")
+#re-label OGs based on homo gene label
+homo_apo_OGs_acc<-homo_apo_OGs_acc[order(homo_apo_OGs_acc$OG),]
+z <- homo_apo_OGs_acc[!duplicated(homo_apo_OGs_acc$OG),]
+
+#import OrthoFinder counts (All genes)
+all_OG_counts<-read.table("inputs/Orthogroups.GeneCount_3_19.csv", header=T, stringsAsFactors = F,row.names=1) 
+all_OG_counts<-all_OG_counts[,colnames(all_OG_counts)!="Total"]
+all_OG_counts<-all_OG_counts[,colnames(all_OG_counts)!="Lottia_pep.fa_ed"]
+colnames(all_OG_counts)<-unlist(strsplit(colnames(all_OG_counts),split="[.]fa_ed"))
+colnames(all_OG_counts)<-gsub(x=colnames(all_OG_counts),pattern="_.+", replacement="", perl=T)
+colnames(all_OG_counts)<-gsub(x=colnames(all_OG_counts),pattern="\\.fa", replacement="", perl=T)
+colnames(all_OG_counts)<-gsub(x=colnames(all_OG_counts),pattern="hydra", replacement="Hydra", perl=T)
+
+Homo_apo_gene_counts<-all_OG_counts[rownames(all_OG_counts) %in% unique(homo_apo_OGs_acc$OG),]
+
+
+#re-label OGs based on homo gene label
+homo_apo_OGs_acc<-homo_apo_OGs_acc[order(homo_apo_OGs_acc$OG),]
+z <- homo_apo_OGs_acc[!duplicated(homo_apo_OGs_acc$OG),]
+
+rownames(Homo_apo_gene_counts)<-z$gene_acc[z$OG %in% rownames(Homo_apo_gene_counts)]
+rownames(Homo_apo_gene_counts)<-unlist(lapply(strsplit(rownames(Homo_apo_gene_counts),"_"),function(x) x[1]))
+
+apo_gene_counts<-Homo_apo_gene_counts
+```
+
+There are `r length(unique(homo_apo_OGs_acc$OG))` unique OGs mapping to `r nrow(homo_apo_OGs_acc)` KEGG symbols.
+
+
+#### Apoptosis gene symbols with shared OrthoGroups membership:
+Human gene symbols sharing membership to a single OrthoFinder cluster:
+
+```{r duplicates, results="markdown"}
+dupes<-homo_apo_OGs_acc$OG[duplicated(homo_apo_OGs_acc$OG)==T]
+homo_apo_OGs_acc[homo_apo_OGs_acc$OG %in% dupes,]
+```
+
+### Phylogenetic distribution of apoptotic orthogroups 
+Heatmap of hierarchical clustered OG (log) counts encompassing `r nrow(z)` orthogroups. 
+```{r phyloheatmap,fig.width=10}
+
+#load time-calibrated tree
+tr<-ladderize(read.tree(text="((Salpingoeca:421.369,Monosiga:421.369)463.239_393.315:354.63,(Mnemiopsis:768.272,((Trichoplax:719.387,((Nematostella:634.241,Hydra:634.241)647.408_619.876:61.7069,(((Strongylocentrotus:589.015,Saccoglossus:589.015)602.878_568.615:39.7315,((Petromyzon:506.894,((Pelodiscus:291.912,(Mus:105.342,Homo:105.342)136.796_76.6361:186.57)314.315_267.002:126.56,Danio:418.472)420.881_416.133:88.4219)524.76_493.869:82.6253,Ciona:589.52)598.668_580.057:39.2275)632.473_624.616:5.9575,(((Octopus:519.154,(Lottia:482.211,(Mya:429.695,Crassostrea:429.695)466.606_357.123:52.5151)513.616_449.654:36.9431)538.519_491.252:62.4529,(Lingula:561.773,(Helobdella:500.788,Capitella:500.788)514.777_480.347:60.9842)574.53_544.281:19.834)592.671_567.997:32.3427,(Priapulus:598.189,(Caenorhabditis:582.446,(Stegodyphus:557.454,(Daphnia:501.127,(Rhodnius:423.613,(Nasonia:396.974,(Tribolium:362.347,(Drosophila:338.322,Bombyx:338.322)352.26_313.781:24.025)375.218_346.708:34.6273)404.973_384.236:26.6384)433.502_413.302:77.5142)503.637_500.031:56.3273)566.221_551.606:24.992)588.479_574.033:15.7423)603.689_590.372:15.7606)617.873_608.769:20.7552)635.968_631.698:61.243)713.557_685.457:23.4394)734.429_705.697:25.4762,Amphimedon:744.863)756.059_732.919:23.409)775.774_760.883:7.7263)779.751_770.795;")) #time-calibrated tree
+plot(tr);axisPhylo()
+
+#rename and plot tree
+tree<-tr
+#plot(tree, cex=0.9)
+nodenames<-c("Holozoa","Choanoflagellata","Metazoa","non-cten","Parahoxozoa","planulazoa","Cnidaria","Bilateria","Deuterostomia","Ambulacraria","Chordata","Vertebrata","Gnathostomata","Tetrapoda","Mammalia","Protostomia","Spiralia","Lophotrochozoa","Annelida","Mollusca","Pleistomollusca","Bivalvia","Ecdysozoa","PanaNema","Panarthopoda","Pancrustacea","Hexapoda","Holometabola","Holo2","Holo3")
+plot(tr);nodelabels(nodenames,frame="none",cex=0.5)
+
+
+#load character matrix
+chars<- apo_gene_counts
+
+#cluster based on counts
+d<-dist(chars)
+hc<-hclust(d)
+chars_reorder<-chars[hc$labels[hc$order],]
+t_chars_reorder<-t(chars_reorder)
+rownames(t_chars_reorder)
+
+phylo.heatmap(tree, log(t_chars_reorder+1), length=10, standardize = F, mar=c(2,2,2,2),fsize=0.5)
+
+```
+
+
+### Hypothesis 1a: Ecdysozoa significantly depeleted for Apoptosis genes compared to other bilaterians
+Use Fisher-Pitman Exact test at each apoptosis OG to determine whether Ecdysozoa are differently enriched relative to other bilaterians.
+```{r cointest}
+library(coin)
+#set up data to compare deuts,lophs vs ecysozoa
+deut<-extract.clade(tree,node=getMRCA(tree,tip=c("Saccoglossus","Homo")))$tip.label
+loph<-extract.clade(tree,node=getMRCA(tree,tip=c("Lingula","Mya")))$tip.label
+ecdy<-extract.clade(tree,node=getMRCA(tree,tip=c("Priapulus","Nasonia")))$tip.label
+nonbilat<-tree$tip.label[!(tree$tip.label) %in% c(deut,loph,ecdy)]
+bilat.data<-t_chars_reorder[rownames(t_chars_reorder) %in% c(deut,loph,ecdy),]
+
+is.ecdy<-c(rep(0,length(deut)),rep(0,length(loph)),rep(1,length(ecdy)))
+bilat.data<-bilat.data[c(deut,loph,ecdy),]
+res1<-c();res2<-c(); res1b<-c();zstat<-c()
+for (i in 1:ncol(bilat.data))
+{dv<-bilat.data[,i]
+iv<-as.factor(is.ecdy)
+zstat[i]<-statistic(independence_test(dv~iv,distribution="exact"))
+res2[i]<-pvalue(independence_test(dv~iv,distribution="exact")) #default is two.way
+res1[i]<-pvalue(independence_test(dv~iv,distribution="exact", alternative="greater")) #testing if non-ecdysozans are greater than ecdysozoans
+res1b[i]<-pvalue(independence_test(dv~iv,distribution="exact", alternative="less")) #testing if non-ecdysozans are greater than ecdysozoans
+
+}
+```
+
+```{r coinres, include=TRUE, results="show"}
+#uncorrected pvalues
+paste("Proportion of OGs significantly depleted in Ecdysozoa:", signif(length(which(res1<0.05))/length(res1),2))
+
+paste("Number of OGs significantly depleted in Ecdysozoa:",length(which(res1<0.05)))
+paste("Total OGs considered:", length(res1))
+paste("Proportion of OGs significantly enriched in Ecdysozoa:", signif(length(which(res1b<0.05))/length(res1b),3))
+paste("Number of OGs significantly enriched in Ecdysozoa:", length(which(res1b<0.05)))
+
+
+#corrected P-values
+res<-data.frame(cbind(zstat,p.adjust(res1,method="fdr"), p.adjust(res1b,method="fdr"),p.adjust(res2,method="fdr")));colnames(res)<-c("Zstat","fdr_low_Ecdy","fdr_high_Ecdy","fdr_twoway")
+rownames(res)<-colnames(bilat.data)
+
+paste("Proportion of OGs significantly (FDR<", fdrcutoff,") depleted in Ecdysozoa:", signif(length(which(res$fdr_low_Ecdy<fdrcutoff))/length(res1),2)) 
+paste("Number of OGs significantly (FDR<", fdrcutoff,") depleted in Ecdysozoa:", length(which(res$fdr_low_Ecdy<fdrcutoff)))
+paste("Total OGs considered:", length(res1))
+paste("Proportion of OGs significantly (FDR<", fdrcutoff,") enriched in Ecdysozoa:",signif(length(which(res$fdr_high_Ecdy<fdrcutoff))/length(res1b),2))
+paste("Number of OGs significantly (FDR<", fdrcutoff,") enriched in Ecdysozoa:", length(which(res$fdr_high_Ecdy<fdrcutoff)))
+#save which OGs are depleted vs enriched
+results1a<-res
+
+```
+
+#### Heatmap (Hypothesis 1a) showing only the apoptosis OGs with signficantly differences in enrichment between Ecdysozoa and other bilaterians
+```{r heatmap2, fig.width=10}
+#plot heatmap for only genes which are differently enriched 
+signif<-c(rownames(res)[which(res$fdr_low_Ecdy<fdrcutoff)],rownames(res)[which(res$fdr_high_Ecdy<fdrcutoff)])
+sig.data<-t_chars_reorder[,signif]
+plot(hclust(dist(t(sig.data))))
+order<-hclust(dist(t(sig.data)))$order
+sig_reorder<-sig.data[,order]
+phylo.heatmap(tree, log(sig_reorder+1), length=10, standardize = F,mar=c(2,2,2,2),fsize=0.5)
+
+sig1a<-sig.data
+
+```
+
+There are `r length(signif)` genes with differential enrichment.
+
+## Ancestral states of GeneGlobe Apoptosis genes
+### Dollo parsimony ASR
+```{r dollo}
+#pdf("dolloASR_allKEGG.pdf")
+#sigOGs<-t_chars_reorder #used to run all the KEGG genes, then saved the table output to csv
+
+pdf("dolloASR_signif1a.KEGGonly.pdf")
+library(viridis)
+vp<-viridis_pal(option="D")(100)
+present.col<-vp[20]; absent.col<-vp[80]
+ 
+asr.colors<-setNames(c(absent.col,present.col),c("0","1"))
+library(phangorn)
+#select set of genes to analyse
+sigOGs<-sig1a
+
+#setup frame to store results
+anc.states<-as.data.frame(matrix(NA,ncol=ncol(sigOGs),nrow=Nnode(tree)))
+colnames(anc.states)<-colnames(sigOGs)
+for (og in 1:ncol(sigOGs))
+{
+  #og<-"IGF1R" #for troubleshooting 
+ char<-sigOGs[tree$tip.label,og]
+
+plot(tree)
+title(colnames(sigOGs)[og])
+tiplabels(tip=which(tree$tip.label %in% tree$tip.label[char==0]),col=absent.col,pch=16,cex=1,frame="none")
+tiplabels(tip=which(tree$tip.label %in% tree$tip.label[char>0]),col=present.col,pch=16,cex=1,frame="none")
+
+#Dollo step1: establish list of tips with Present state
+present.tips<-which(tree$tip.label %in% names(which(char>0))) #char is already matching tree tip.label order
+anc.nodes<-c()
+
+
+for (dec in 1:length(present.tips)){
+#Dollo step 2: determine youngest nodes subtending Present tips
+ parentnode<-tree$edge[which(tree$edge[,2]==present.tips[dec]),1]
+ anc.nodes<-c(anc.nodes,parentnode)
+}
+anc.nodes<-unique(anc.nodes)
+nodelabels(node=anc.nodes,pch=16,col=present.col)
+
+# Dollo step 3: For the remaining, yet-undetermined nodes: save as Present IF there are both older AND younger nodes saved as Present. Any MRCA between Present nodes must also be a Present.
+
+# capture descendents (nodes+tips) for each node
+descs<-phangorn::allDescendants(x=tree)
+
+# create list of undetermined nodes by using the parent nodes of just-determined (step2) Present nodes to subset the whole tree's internal nodes and retain only those internal nodes representing a MRCA to Present nodes
+intnodes<-unique(tree$edge[,1])
+nextnodeup<-unique(tree$edge[which(tree$edge[,2] %in% anc.nodes),1])
+rem_intnodes<-intnodes[intnodes>=min(nextnodeup)]
+
+# ensure root is excluded for now (later, explicitly check if outgroup descendents are Present before saving root as Present)
+root.node<-Ntip(tree)+1
+rem_intnodes<-rem_intnodes[!(rem_intnodes %in% root.node)]
+
+#for the node preceeding the last certain Present node, check if it has one absent descendent tip, if so exclude this node from next step
+if(all(Descendants(tree,min(rem_intnodes),"children") %in% c(present.tips,anc.nodes))==FALSE)
+  {rem_intnodes<-rem_intnodes[!(rem_intnodes %in% min(rem_intnodes))]
+}
+
+
+# save these undetermined nodes as Present if any of their descendents are Present
+for (n in unique(rem_intnodes)){
+  if (any(present.tips %in% unlist(descs[n]))){ anc.nodes<-c(anc.nodes,n)}
+}
+anc.nodes<-unique(anc.nodes)
+nodelabels(node=anc.nodes,pch=16,col=present.col)
+
+# Dollo step 4: check if the deepest MRCAs between Present descendents hasn't been captured as Present
+ti<-c(unlist(descs[min(anc.nodes)]),unlist(descs[max(anc.nodes)])) 
+tips<-tree$tip.label[ti [ti<= Ntip(tree)]]
+mrca1<-getMRCA(tree,tips)
+ if (any(present.tips %in% unlist(descs[mrca1]))){ anc.nodes<-c(anc.nodes,mrca1)}
+nodelabels(node=anc.nodes,pch=16,col=present.col)
+
+#if there are intermediate nodes between mrca-present and presnet-nodes, add to present list
+#overlap of getDescendents and getAncesotrs(of present nodes)
+for (n in anc.nodes){
+  ancs.tmp<-phangorn::Ancestors(x=tree,node=n)
+ anc.nodes<-c(anc.nodes,ancs.tmp [ancs.tmp %in% unlist(descs[mrca1])])
+}
+anc.nodes<-unique(anc.nodes)
+nodelabels(node=anc.nodes,pch=16,col=present.col)
+
+
+# Dollo step 5: if both of the desendent nodes of the root are in the Present node list, add root to list
+rootchildren<-tree$edge[tree$edge[,1]==root.node,2]
+if (any(present.tips %in% unlist(descs[rootchildren[21]])) & any(present.tips %in% unlist(descs[rootchildren[2]]))){ anc.nodes<-c(anc.nodes,root.node)}
+
+# save results in table
+presnodes<-anc.nodes-Ntip(tree)
+absnodes<-unique(sort(tree$edge[,1]))[!(unique(sort(tree$edge[,1])) %in% anc.nodes)]-Ntip(tree)
+nodelabels(node=absnodes+Ntip(tree),pch=16,col=absent.col)
+anc.states[ presnodes,og]<-"present"
+anc.states[absnodes,og]<-"absent"
+anc.states[,og]
+}
+dev.off()
+dollo.anc.states<-anc.states
+
+## used when running entire KEGG ASRs
+#rownames(dollo.anc.states)<-nodenames
+#write.csv(dollo.anc.states,file="KEGG_ASR.csv")
+```
+
+### Summary Dollo ASR for significant genes under Hypothesis 1a
+
+```{r asr_summary}
+dollo.anc.states[dollo.anc.states=="present"]<-1
+dollo.anc.states[dollo.anc.states=="absent"]<-0
+dollo.anc.states<-as.data.frame(lapply(dollo.anc.states, as.numeric))
+
+pres.og<-rowSums(dollo.anc.states)
+abs.og<-(ncol(dollo.anc.states)-pres.og)
+dollo.mat<-cbind(abs.og,pres.og)
+
+par(mar=c(3,3,3,1))
+plot(tree,cex=0.3)
+axisPhylo()
+nodelabels(pie=dollo.mat, piecol=asr.colors, cex=.5)
+title(paste0("Proportions of OGs ancestrally present\n(",ncol(dollo.anc.states)," signif OGs)"))
+
+bilat.node<-getMRCA(tree,tip=c("Mya","Homo"))
+bilat.prop.present<-round(dollo.mat[bilat.node-Ntip(tree),2]/ncol(dollo.anc.states),2)
+nodelabels(node=bilat.node,text=bilat.prop.present,adj=c(1.5,-1),frame="none")
+
+
+deut.node<-getMRCA(tree,tip=c("Saccoglossus","Homo"))
+deut.prop.present<-round(dollo.mat[deut.node-Ntip(tree),2]/ncol(dollo.anc.states),2)
+nodelabels(node=deut.node,text=deut.prop.present,adj=c(1.5,-1),frame="none")
+
+
+ecdy.node<-getMRCA(tree,tip=c("Priapulus","Drosophila"))
+ecdy.prop.present<-round(dollo.mat[ecdy.node-Ntip(tree),2]/ncol(dollo.anc.states),2)
+nodelabels(node=ecdy.node,text=ecdy.prop.present,adj=c(1.5,-1),frame="none")
+
+nonscalid.node<-getMRCA(tree,tip=c("Caenorhabditis","Drosophila"))
+nonscalid.prop.present<-round(dollo.mat[nonscalid.node-Ntip(tree),2]/ncol(dollo.anc.states),2)
+nodelabels(node=nonscalid.node,text=nonscalid.prop.present,adj=c(1.5,0.5),frame="none")
+
+
+loph.node<-getMRCA(tree,tip=c("Lingula","Mya"))
+loph.prop.present<-round(dollo.mat[loph.node-Ntip(tree),2]/ncol(dollo.anc.states),2)
+nodelabels(node=loph.node,text=loph.prop.present,adj=c(1.5,-1),frame="none")
+
+```
+
+```{r count_losses}
+root.node<-Ntip(tree)+1
+
+
+rownames(dollo.anc.states)<-seq(from=(Ntip(tree)+1),to=(Nnode(tree)+Ntip(tree)))
+char<-sigOGs[tree$tip.label,]
+alledges<-rbind(char,dollo.anc.states)
+nrow(alledges)
+rownames(alledges)<-seq(from=1,to=nrow(tree$edge)+1)
+
+
+loss.table<-matrix(NA,nrow=nrow(dollo.anc.states),ncol=ncol(dollo.anc.states),dimnames = dimnames(dollo.anc.states))
+for (og in colnames(alledges)){
+  for (row in 1:nrow(tree$edge)){
+    ancnode<-tree$edge[row,1];# print(ancnode)
+    decnode<-tree$edge[row,2];#print(decnode)
+    if (alledges[ancnode,og]>0 & alledges[decnode,og]==0){
+     loss.table[rownames(loss.table)==ancnode,og]<-"loss"}
+  }
+}
+
+#hypothesis: more losses in ecdysozoans than loph or verts
+#barplot, coin test
+loph.des<-getDescendants(tree,node=loph.node)
+loph.losses<-length(which(loss.table[rownames(loss.table) %in% c(loph.des,loph.node),]=="loss"))
+
+deut.des<-getDescendants(tree,node=deut.node)
+deut.losses<-length(which(loss.table[rownames(loss.table) %in% c(deut.des,deut.node),]=="loss"))
+
+ecdy.des<-getDescendants(tree,node=ecdy.node)
+ecdy.losses<-length(which(loss.table[rownames(loss.table) %in% c(ecdy.des,ecdy.node),]=="loss"))
+
+nonscal.des<-getDescendants(tree,node=nonscalid.node)
+nonscal.losses<-length(which(loss.table[rownames(loss.table) %in% c(nonscal.des,nonscalid.node),]=="loss"))
+par(mar=c(10,5,3,1))
+bp<-barplot(c(deut.losses,loph.losses,ecdy.losses,nonscal.losses),ylab="Number of aptoptosis OG losses, inferred by Dollo parsimony", ylim=c(0,max(deut.losses,loph.losses,ecdy.losses)*1.25),names.arg = c("Deuterostomia","Lophotrochozoa","Ecdysozoa","non-priap"),las=1,cex.names=0.7)
+title(paste0("Total loss events by clade\ninferred from",ncol(loss.table)," significant OGs"))
+text(x=bp,labels=c(deut.losses,loph.losses,ecdy.losses,nonscal.losses),y=c(deut.losses,loph.losses,ecdy.losses,nonscal.losses)-3)
+
+library(coin)
+dv<-apply(data.frame(loss.table),1,function(x) length(which(x=="loss")))
+
+iv1e<- c(ecdy.des,ecdy.node)[c(ecdy.des,ecdy.node) %in% names(dv)]; iv1<-rep("ecdy",length(iv1e)); names(iv1)<-iv1e
+iv1l<- c(loph.des,loph.node)[c(loph.des,loph.node) %in% names(dv)]; iv2<-rep("loph",length(iv1l)); names(iv2)<-iv1l
+iv1d<- c(deut.des,deut.node)[c(deut.des,deut.node) %in% names(dv)]; iv3<-rep("deut",length(iv1d)); names(iv3)<-iv1d
+iv<-c(iv1,iv2,iv3)[order(names(c(iv1,iv2,iv3)))]
+dv<-dv[names(dv) %in% names(iv)]
+
+#loph vs ecdy
+coin::statistic(independence_test(dv[iv!="deut"]~as.factor(iv)[iv!="deut"],distribution="exact"))
+coin::pvalue(independence_test(dv[iv!="deut"]~as.factor(iv)[iv!="deut"],distribution="exact",alternative="less")) #default is two.way
+coin::pvalue(independence_test(dv[iv!="deut"]~as.factor(iv)[iv!="deut"],distribution="exact",alternative="greater")) #default is two.way
+
+#deut vs ecdy
+coin::statistic(independence_test(dv[iv!="loph"]~as.factor(iv)[iv!="loph"],distribution="exact"))
+coin::pvalue(independence_test(dv[iv!="loph"]~as.factor(iv)[iv!="loph"],distribution="exact",alternative="less")) #default is two.way
+coin::pvalue(independence_test(dv[iv!="loph"]~as.factor(iv)[iv!="loph"],distribution="exact",alternative="greater")) #default is two.way
+
+#deut vs loph
+coin::statistic(independence_test(dv[iv!="ecdy"]~as.factor(iv)[iv!="ecdy"],distribution="exact"))
+coin::pvalue(independence_test(dv[iv!="ecdy"]~as.factor(iv)[iv!="ecdy"],distribution="exact",alternative="less")) #default is two.way
+coin::pvalue(independence_test(dv[iv!="ecdy"]~as.factor(iv)[iv!="ecdy"],distribution="exact",alternative="greater")) #default is two.way
+
+deutecdy.t<-t.test(dv[iv!="loph"]~as.factor(iv)[iv!="loph"],alternative="less")$p.value #deut vs ecdy--tests if ecdy is less
+lophecdy.t<-t.test(dv[iv!="deut"]~as.factor(iv)[iv!="deut"],alternative="greater")$p.value #loph vs ecdy--tests if ecdy is greater
+nonecdy.t<-t.test(dv[iv!="ecdy"]~as.factor(iv)[iv!="ecdy"],alternative="less")$p.value #deut vs loph--tests if loph is greater
+
+iv2<-replace(x=iv,list=(iv %in% c("deut","loph")),"nonec")
+bilat.t<-t.test(dv~as.factor(iv2),alternative="greater")$p.value
+
+#try fishers test: 
+#number losses to non-losses
+loss.table[is.na(loss.table)]<-"notlost"  #meaning nodes which are not loss-events (ie may be present OR absent states)
+
+loph.nonlosses<-length(loss.table[rownames(loss.table) %in% c(loph.des,loph.node),])-loph.losses
+ecdy.nonlosses<-length(loss.table[rownames(loss.table) %in% c(ecdy.des,ecdy.node),])-ecdy.losses
+deut.nonlosses<-length(loss.table[rownames(loss.table) %in% c(deut.des,deut.node),])-deut.losses
+bilat.nonlosses<-deut.nonlosses+loph.nonlosses
+bilat.losses<-loph.losses+deut.losses
+
+
+#chi sq note different data set up: giving successes and total counts of trials
+leXp<-prop.test(x=c(loph.losses,ecdy.losses),n=c(loph.nonlosses+loph.losses,ecdy.nonlosses+ecdy.losses))$p.value
+ldXp<-prop.test(c(loph.losses,deut.losses),c(loph.nonlosses+loph.losses,deut.losses+deut.nonlosses))$p.value
+deXp<-prop.test(c(deut.losses,ecdy.losses),c(deut.losses+deut.nonlosses,ecdy.losses+ecdy.nonlosses))$p.value
+par(mar=c(10,5,3,1))
+bp<-barplot(matrix(c(deut.losses,loph.losses,ecdy.losses,deut.nonlosses,loph.nonlosses,ecdy.nonlosses),ncol=3,byrow=T),ylab="Number of aptoptosis OG loss events,\n inferred by Dollo parsimony",names.arg = c("Deuterostomia","Lophotrochozoa","Ecdysozoa"),las=1,ylim=c(0,max(deut.nonlosses,loph.nonlosses,ecdy.nonlosses)*1.5),cex.names=0.7)
+
+title(paste0("Nodes with and without loss events by clade\n inferred  from",ncol(loss.table)," significant OGs"))
+text(x=bp,labels=c(deut.losses,loph.losses,ecdy.losses),y=c(deut.losses,loph.losses,ecdy.losses)-10,col="white")
+
+
+```
+P-values from t-tests for greater number of losses in apoptotic genes:
+
+- deuterostomes vs ecdysozoans: `r deutecdy.t`
+- lophotrochozoans vs ecdysozoans: `r lophecdy.t`
+- lophotrochozoans vs deuterostomes: `r nonecdy.t`
+- other bilaterians vs ecdysozoans: `r bilat.t`
+
+So Deuterostomes have lost signifcantly fewer apopototic genes than Ecdysozoa.  Lophotrochozoans have lost fewer but not 'sig
+
+P-values from $\\X^2$ test for proportionally more loss events:
+
+- deuterostomes vs ecdysozoans: `r deXp`
+- lophotrochozoans vs ecdysozoans: `r leXp`
+- lophotrochozoans vs deuterostomes: `r ldXp`
+
+
+
+
+### Hypothesis 1b (Protostomia): Ecdysozoa significantly depeleted for Apoptosis genes compared to Lophotrochozoa
+Use Fisher-Pitman Exact test at each apoptosis OG to determine whether Ecdysozoa are differently enriched relative to lophotrochozoans.
+```{r cointest_b}
+
+proto.data<-t_chars_reorder[rownames(t_chars_reorder) %in% c(loph,ecdy),]
+#remove empty gene columns
+proto.data<-proto.data[,colSums(proto.data)!=0]
+
+is.ecdy<-c(rep(0,length(loph)),rep(1,length(ecdy)))
+proto.data<-proto.data[c(loph,ecdy),]
+
+res1<-c();res2<-c(); res1b<-c();zstat<-c()
+for (i in 1:ncol(proto.data))
+{dv<-proto.data[,i]
+iv<-as.factor(is.ecdy)
+zstat[i]<-statistic(independence_test(dv~iv,distribution="exact"))
+res2[i]<-coin::pvalue(independence_test(dv~iv,distribution="exact")) #default is two.way
+res1[i]<-coin::pvalue(independence_test(dv~iv,distribution="exact", alternative="greater")) #testing if non-ecdysozans are greater than ecdysozoans
+res1b[i]<-coin::pvalue(independence_test(dv~iv,distribution="exact", alternative="less")) #testing if non-ecdysozans are greater than ecdysozoans
+}
+```
+
+```{r coinres_b, include=TRUE, results="show"}
+#uncorrected pvalues
+paste("Proportion of OGs significantly depleted in Ecdysozoa:", signif(length(which(res1<0.05))/length(res1),2))
+
+paste("Number of OGs significantly depleted in Ecdysozoa:",length(which(res1<0.05)))
+paste("Total OGs considered:", length(res1))
+paste("Proportion of OGs significantly enriched in Ecdysozoa:", signif(length(which(res1b<0.05))/length(res1b),3))
+paste("Number of OGs significantly enriched in Ecdysozoa:", length(which(res1b<0.05)))
+
+
+#corrected P-values
+res<-data.frame(cbind(zstat,p.adjust(res1,method="fdr"), p.adjust(res1b,method="fdr"),p.adjust(res2,method="fdr")));colnames(res)<-c("Zstat","fdr_low_Ecdy","fdr_high_Ecdy","fdr_twoway")
+rownames(res)<-colnames(proto.data)
+
+paste("Proportion of OGs significantly (FDR<", fdrcutoff,") depleted in Ecdysozoa:", signif(length(which(res$fdr_low_Ecdy<fdrcutoff))/length(res1),2)) 
+paste("Number of OGs significantly (FDR<", fdrcutoff,") depleted in Ecdysozoa:", length(which(res$fdr_low_Ecdy<fdrcutoff)))
+paste("Total OGs considered:", length(res1))
+paste("Proportion of OGs significantly (FDR<", fdrcutoff,") enriched in Ecdysozoa:",signif(length(which(res$fdr_high_Ecdy<fdrcutoff))/length(res1b),2))
+paste("Number of OGs significantly (FDR<", fdrcutoff,") enriched in Ecdysozoa:", length(which(res$fdr_high_Ecdy<fdrcutoff)))
+
+```
+#### Heatmap (Hypothesis 1b: Protostomia) showing only the apoptosis OGs with signficantly differences in enrichment between Ecdysozoa and Lophotrochozoa
+```{r heatmap2_b, fig.width=10}
+signif<-c(rownames(res)[which(res$fdr_low_Ecdy<fdrcutoff)],rownames(res)[which(res$fdr_high_Ecdy<fdrcutoff)])
+sig.data<-t_chars_reorder[,signif]
+plot(hclust(dist(t(sig.data))))
+order<-hclust(dist(t(sig.data)))$order
+sig_reorder<-sig.data[,order]
+phylo.heatmap(tree, log(sig_reorder+1), length=10, standardize = F,mar=c(2,2,2,2),fsize=0.7)
+
+```
+
+There are `r length(signif)` genes with differential enrichment.
+
+
+### Hypothesis 1c: Ecdysozoa significantly depeleted for Apoptosis genes compared to Mollusca
+Use Fisher-Pitman Exact test at each apoptosis OG to determine whether Ecdysozoa are differently enriched relative to the mollusks.
+```{r cointest_c}
+
+mollusc<-extract.clade(tree,node=getMRCA(tree,tip=c("Mya","Octopus")))$tip.label
+mollecdy.data<-t_chars_reorder[rownames(t_chars_reorder) %in% c(mollusc,ecdy),]
+#remove empty gene columns
+mollecdy.data<-mollecdy.data[,colSums(mollecdy.data)!=0]
+
+is.ecdy<-c(rep(0,length(mollusc)),rep(1,length(ecdy)))
+mollecdy.data<-mollecdy.data[c(mollusc,ecdy),]
+
+res1<-c();res2<-c(); res1b<-c();zstat<-c()
+for (i in 1:ncol(mollecdy.data))
+{dv<-mollecdy.data[,i]
+iv<-as.factor(is.ecdy)
+if(var(dv)==0){zstat[i]<-100;res2[i]<-1;res1[i]<-1;res1b[i]<-1} else{
+zstat[i]<-statistic(independence_test(dv~iv,distribution="exact"))
+res2[i]<-coin::pvalue(independence_test(dv~iv,distribution="exact")) #default is two.way
+res1[i]<-coin::pvalue(independence_test(dv~iv,distribution="exact", alternative="greater")) #testing if non-ecdysozans are greater than ecdysozoans
+res1b[i]<-coin::pvalue(independence_test(dv~iv,distribution="exact", alternative="less")) #testing if non-ecdysozans are greater than ecdysozoans
+}}
+```
+
+```{r coinres_c, include=TRUE, results="show"}
+#uncorrected pvalues
+paste("Proportion of OGs significantly depleted in Ecdysozoa:", signif(length(which(res1<0.05))/length(res1),2))
+
+paste("Number of OGs significantly depleted in Ecdysozoa:",length(which(res1<0.05)))
+paste("Total OGs considered:", length(res1))
+paste("Proportion of OGs significantly enriched in Ecdysozoa:", signif(length(which(res1b<0.05))/length(res1b),3))
+paste("Number of OGs significantly enriched in Ecdysozoa:", length(which(res1b<0.05)))
+
+
+#corrected P-values
+res<-data.frame(cbind(zstat,p.adjust(res1,method="fdr"), p.adjust(res1b,method="fdr"),p.adjust(res2,method="fdr")));colnames(res)<-c("Zstat","fdr_low_Ecdy","fdr_high_Ecdy","fdr_twoway")
+rownames(res)<-colnames(mollecdy.data)
+
+paste("Proportion of OGs significantly (FDR<", fdrcutoff,") depleted in Ecdysozoa:", signif(length(which(res$fdr_low_Ecdy<fdrcutoff))/length(res1),2)) 
+paste("Number of OGs significantly (FDR<", fdrcutoff,") depleted in Ecdysozoa:", length(which(res$fdr_low_Ecdy<fdrcutoff)))
+paste("Total OGs considered:", length(res1))
+paste("Proportion of OGs significantly (FDR<", fdrcutoff,") enriched in Ecdysozoa:",signif(length(which(res$fdr_high_Ecdy<fdrcutoff))/length(res1b),2))
+paste("Number of OGs significantly (FDR<", fdrcutoff,") enriched in Ecdysozoa:", length(which(res$fdr_high_Ecdy<fdrcutoff)))
+
+```
+
+#### Heatmap (Hypothesis 1c) showing only the apoptosis OGs with signficantly differences in enrichment between Ecdysozoa and Mollusca
+```{r heatmap2_c, fig.width=10}
+signif<-c(rownames(res)[which(res$fdr_low_Ecdy<fdrcutoff)],rownames(res)[which(res$fdr_high_Ecdy<fdrcutoff)])
+sig.data<-t_chars_reorder[,signif]
+plot(hclust(dist(t(sig.data))))
+order<-hclust(dist(t(sig.data)))$order
+sig_reorder<-sig.data[,order]
+phylo.heatmap(tree, log(sig_reorder+1), length=10, standardize = F,mar=c(2,2,2,2),fsize=0.7)
+
+```
+
+There are `r length(signif)` genes with differential enrichment.
+
+
+
+### Hypothesis 1d: NematoArthropods significantly depeleted for Apoptosis genes compared to Lophotrochozoa
+Use Fisher-Pitman Exact test at each apoptosis OG to determine whether non-scalidophoran Ecdysozoa (i.e, only Nematoda + Panarthropoda) are differently enriched relative to the lophotrochozoans.
+```{r cointest_d}
+nemoArth<-extract.clade(tree,node=getMRCA(tree,tip=c("Caenorhabditis","Nasonia")))$tip.label
+lophnemoA.data<-t_chars_reorder[rownames(t_chars_reorder) %in% c(loph,nemoArth),]
+#remove empty gene columns
+lophnemoA.data<-lophnemoA.data[,colSums(lophnemoA.data)!=0]
+
+is.ecdy<-c(rep(0,length(loph)),rep(1,length(nemoArth)))
+lophnemoA.data<-lophnemoA.data[c(loph,nemoArth),]
+res1<-c();res2<-c(); res1b<-c();zstat<-c()
+for (i in 1:ncol(lophnemoA.data))
+{dv<-lophnemoA.data[,i]
+iv<-as.factor(is.ecdy)
+if(var(dv)==0){zstat[i]<-100;res2[i]<-1;res1[i]<-1;res1b[i]<-1} else{
+zstat[i]<-statistic(independence_test(dv~iv,distribution="exact"))
+res2[i]<-coin::pvalue(independence_test(dv~iv,distribution="exact")) #default is two.way
+res1[i]<-coin::pvalue(independence_test(dv~iv,distribution="exact", alternative="greater")) #testing if non-ecdysozans are greater than ecdysozoans
+res1b[i]<-coin::pvalue(independence_test(dv~iv,distribution="exact", alternative="less")) #testing if non-ecdysozans are greater than ecdysozoans
+}}
+```
+
+```{r coinres_d, include=TRUE, results="show"}
+#uncorrected pvalues
+paste("Proportion of OGs significantly depleted in non-scalidophoran Ecdysozoa:", signif(length(which(res1<0.05))/length(res1),2))
+
+paste("Number of OGs significantly depleted in non-scalidophoran Ecdysozoa:",length(which(res1<0.05)))
+paste("Total OGs considered:", length(res1))
+paste("Proportion of OGs significantly enriched in non-scalidophoran Ecdysozoa:", signif(length(which(res1b<0.05))/length(res1b),3))
+paste("Number of OGs significantly enriched in non-scalidophoran Ecdysozoa:", length(which(res1b<0.05)))
+
+#corrected P-values
+res<-data.frame(cbind(zstat,p.adjust(res1,method="fdr"), p.adjust(res1b,method="fdr"),p.adjust(res2,method="fdr")));colnames(res)<-c("Zstat","fdr_low_Ecdy","fdr_high_Ecdy","fdr_twoway")
+rownames(res)<-colnames(lophnemoA.data)
+paste("Proportion of OGs significantly (FDR<", fdrcutoff,") depleted in non-scalidophoran Ecdysozoa:", signif(length(which(res$fdr_low_Ecdy<fdrcutoff))/length(res1),2)) 
+paste("Number of OGs significantly (FDR<", fdrcutoff,") depleted in non-scalidophoran Ecdysozoa:", length(which(res$fdr_low_Ecdy<fdrcutoff)))
+paste("Total OGs considered:", length(res1))
+paste("Proportion of OGs significantly (FDR<", fdrcutoff,") enriched in non-scalidophoran Ecdysozoa:",signif(length(which(res$fdr_high_Ecdy<fdrcutoff))/length(res1b),2))
+paste("Number of OGs significantly (FDR<", fdrcutoff,") enriched in non-scalidophoran Ecdysozoa:", length(which(res$fdr_high_Ecdy<fdrcutoff)))
+
+```
+
+#### Heatmap (Hypothesis 1d) showing only the apoptosis OGs with signficantly differences in enrichment between non-scalidophoran Ecdysozoa and Lophotrochozoa
+```{r heatmap2_d, fig.width=10}
+signif<-c(rownames(res)[which(res$fdr_low_Ecdy<fdrcutoff)],rownames(res)[which(res$fdr_high_Ecdy<fdrcutoff)])
+sig.data<-t_chars_reorder[,signif]
+plot(hclust(dist(t(sig.data))))
+order<-hclust(dist(t(sig.data)))$order
+sig_reorder<-sig.data[,order]
+phylo.heatmap(tree, log(sig_reorder+1), length=10, standardize = F,mar=c(2,2,2,2),fsize=0.7)
+```
+
+There are `r length(signif)` genes with differential enrichment.
+
+
+### Hypothesis 1e: NematoArthropods significantly depeleted for Apoptosis genes compared to Mollusca
+Use Fisher-Pitman Exact test at each apoptosis OG to determine whether non-scalidophoran Ecdysozoa (i.e, only Nematoda + Panarthropoda) are differently enriched relative to the mollusks.
+```{r cointest_e}
+nemoArth<-extract.clade(tree,node=getMRCA(tree,tip=c("Caenorhabditis","Nasonia")))$tip.label
+mollnemoA.data<-t_chars_reorder[rownames(t_chars_reorder) %in% c(mollusc,nemoArth),]
+#remove empty gene columns
+mollnemoA.data<-mollnemoA.data[,colSums(mollnemoA.data)!=0]
+
+is.ecdy<-c(rep(0,length(mollusc)),rep(1,length(nemoArth)))
+mollnemoA.data<-mollnemoA.data[c(mollusc,nemoArth),]
+res1<-c();res2<-c(); res1b<-c();zstat<-c()
+for (i in 1:ncol(mollnemoA.data))
+{dv<-mollnemoA.data[,i]
+iv<-as.factor(is.ecdy)
+if(var(dv)==0){zstat[i]<-100;res2[i]<-1;res1[i]<-1;res1b[i]<-1} else{
+zstat[i]<-statistic(independence_test(dv~iv,distribution="exact"))
+res2[i]<-coin::pvalue(independence_test(dv~iv,distribution="exact")) #default is two.way
+res1[i]<-coin::pvalue(independence_test(dv~iv,distribution="exact", alternative="greater")) #testing if non-ecdysozans are greater than ecdysozoans
+res1b[i]<-coin::pvalue(independence_test(dv~iv,distribution="exact", alternative="less")) #testing if non-ecdysozans are greater than ecdysozoans
+}}
+```
+
+```{r coinres_e, include=TRUE, results="show"}
+#uncorrected pvalues
+paste("Proportion of OGs significantly depleted in non-scalidophoran Ecdysozoa:", signif(length(which(res1<0.05))/length(res1),2))
+
+paste("Number of OGs significantly depleted in non-scalidophoran Ecdysozoa:",length(which(res1<0.05)))
+paste("Total OGs considered:", length(res1))
+paste("Proportion of OGs significantly enriched in non-scalidophoran Ecdysozoa:", signif(length(which(res1b<0.05))/length(res1b),3))
+paste("Number of OGs significantly enriched in non-scalidophoran Ecdysozoa:", length(which(res1b<0.05)))
+
+
+#corrected P-values
+res<-data.frame(cbind(zstat,p.adjust(res1,method="fdr"), p.adjust(res1b,method="fdr"),p.adjust(res2,method="fdr")));colnames(res)<-c("Zstat","fdr_low_Ecdy","fdr_high_Ecdy","fdr_twoway")
+rownames(res)<-colnames(mollnemoA.data)
+paste("Proportion of OGs significantly (FDR<", fdrcutoff,") depleted in non-scalidophoran Ecdysozoa:", signif(length(which(res$fdr_low_Ecdy<fdrcutoff))/length(res1),2)) 
+paste("Number of OGs significantly (FDR<", fdrcutoff,") depleted in non-scalidophoran Ecdysozoa:", length(which(res$fdr_low_Ecdy<fdrcutoff)))
+paste("Total OGs considered:", length(res1))
+paste("Proportion of OGs significantly (FDR<", fdrcutoff,") enriched in non-scalidophoran Ecdysozoa:",signif(length(which(res$fdr_high_Ecdy<fdrcutoff))/length(res1b),2))
+paste("Number of OGs significantly (FDR<", fdrcutoff,") enriched in non-scalidophoran Ecdysozoa:", length(which(res$fdr_high_Ecdy<fdrcutoff)))
+
+```
+
+#### Heatmap (Hypothesis 1e) showing only the apoptosis OGs with signficantly differences in enrichment between non-scalidophoran Ecdysozoa and Mollusca
+```{r heatmap2_3, fig.width=10}
+signif<-c(rownames(res)[which(res$fdr_low_Ecdy<fdrcutoff)],rownames(res)[which(res$fdr_high_Ecdy<fdrcutoff)])
+sig.data<-t_chars_reorder[,signif]
+plot(hclust(dist(t(sig.data))))
+order<-hclust(dist(t(sig.data)))$order
+sig_reorder<-sig.data[,order]
+phylo.heatmap(tree, log(sig_reorder+1), length=10, standardize = F,mar=c(2,2,2,2),fsize=0.7)
+```
+
+There are `r length(signif)` genes with differential enrichment.
+
+
+### Hypothesis 2: Apoptotic repertoire is related to genome size. 
+Test for relationship between genome size (total OrthoFinder OG counts) and apoptosis repertoire (total counts mapping to apoptosis gene set) with Least Squares regression.
+
+```{r test2}
+#subset OG counts to exclude apo genes, and exclude nonbilaterians
+bilat.all<-all_OG_counts[,c(deut,loph,ecdy)]
+bilat.all<-bilat.all[rowSums(bilat.all)>1,]
+bilat.nonapo<-bilat.all[!(rownames(bilat.all) %in% homo_apo_OGs_acc$OG), ]
+dim(bilat.nonapo)
+
+#test if different apo repertoire size using anova
+is.ecdy<-c(rep(0,length(deut)),rep(0,length(loph)),rep(1,length(ecdy)))
+is.ecdy[is.ecdy==0]<-"Non-ecdysozoa"
+is.ecdy[is.ecdy==1]<-"ecdysozoa"
+
+aov<-aov(rowSums(bilat.data) ~ is.ecdy)
+plot(rowSums(bilat.data) ~ as.factor(is.ecdy),xlab="",ylab="Abundance of Apoptosis genes")
+Fv<-signif(summary(aov)[[1]][1,"F value"],3)
+pval<-signif(summary(aov)[[1]][1,"Pr(>F)"],2)
+legend("topright",legend=c(paste("F=",Fv),paste("p=",pval)),bty="n")
+
+
+#test using least squares
+ lm<-lm(rowSums(bilat.data) ~ colSums(bilat.nonapo))
+ r2<-signif(summary(lm)$r.squared,2)
+pval<-signif(summary(lm)$coefficients[2,4],2)
+
+plot(rowSums(bilat.data) ~ colSums(bilat.nonapo), xlab="Genome size (total OG counts)", ylab="Abundance of Apoptosis genes"); 
+points(rowSums(bilat.data)[is.ecdy=="ecdysozoa"] ~ colSums(bilat.nonapo)[is.ecdy=="ecdysozoa"],pch=16); legend("topleft",legend=c("ecysozoan","non-ecdysozoan"),pch=c(16,1),bty="n")
+legend("bottomright",legend=c(paste("R2=",r2),paste("p=",pval)),bty="n")
+
+plot(rowSums(bilat.data) ~ colSums(bilat.nonapo), xlab="Genome size (total OG counts)", ylab="Abundance of Apoptosis genes"); 
+points(rowSums(bilat.data)[is.ecdy=="ecdysozoa"] ~ colSums(bilat.nonapo)[is.ecdy=="ecdysozoa"],pch=16);
+
+text(rowSums(bilat.data)[is.ecdy=="ecdysozoa"] ~ colSums(bilat.nonapo)[is.ecdy=="ecdysozoa"],labels=rownames(bilat.data)[is.ecdy=="ecdysozoa"],cex=0.5,adj=0); 
+text(rowSums(bilat.data)[is.ecdy=="Non-ecdysozoa"] ~ colSums(bilat.nonapo)[is.ecdy=="Non-ecdysozoa"],labels=rownames(bilat.data)[is.ecdy=="Non-ecdysozoa"],cex=0.5,adj=0); 
+
+legend("topleft",legend=c("ecysozoan","non-ecdysozoan"),pch=c(16,1),bty="n")
+legend("bottomright",legend=c(paste("R2=",r2),paste("p=",pval)),bty="n")
+
+
+```
+
+#### Hypothesis 2b:Compared to the other bilaterians, apoptosis genes are signficantly more depleted in Ecdysozoa compared to background genomic content 
+Although genome size is correlated with apopototic repertoire size, there are fewer apoptosis genes in Ecdysozoans than expected given their genome sizes.  Below, a histogram showing the distributions of log-ratios for apoptotic and non-apoptotic OGs. Each OG log-ratio was calculated by taking the natural log of the ratio of average gene counts in Lophotrochozoa+Deuterostomia to those in Ecdysozoa.  An OG logratio over 0 indicates that OG is comprised of fewer genes on average in Edysozoa than the other bilaterians.  A Wilcoxon rank-sum test was used to test whether apoptotic OG logratios are significantly lower than non-apoptotic ratios.
+
+```{r logratio}
+#maybe a test of the log-ratios is more understandable than a test of zstats
+mean_counts_non<-apply(bilat.nonapo[,is.ecdy=="Non-ecdysozoa"],1,FUN=mean)
+mean_counts_ecdy<-apply(bilat.nonapo[,is.ecdy=="ecdysozoa"],1,FUN=mean)
+diff.rest<-mean_counts_non-mean_counts_ecdy
+logratio.rest<-log(mean_counts_non/mean_counts_ecdy)
+
+
+mean_apocounts_non<-apply(bilat.data[is.ecdy=="Non-ecdysozoa",],2,FUN=mean)
+mean_apocounts_ecdy<-apply(bilat.data[is.ecdy=="ecdysozoa",],2,FUN=mean)
+diff.apo<-mean_apocounts_non-mean_apocounts_ecdy
+logratio.apo<-log(mean_apocounts_non/mean_apocounts_ecdy)
+
+wtest<-wilcox.test(logratio.apo, logratio.rest)
+hist(logratio.rest,main="Gene-count ratios of non-Ecdysozoa:Ecdysozoa",freq=F,col=scales::alpha("black",0.5))
+hist(logratio.apo,add=T,col=scales::alpha("red",0.5),freq=F,xlab="Ratio of mean OG size, nonecdysozoa vs. ecdysozoa")
+legend("topleft",legend=c("non-apoptosis","apoptosis genes"),bty="n",text.col = c("black","red"))
+legend("topright",legend=paste0("Wilcoxon p:",formatC(wtest$p.value,format="e",digits=1)),bty="n")
+
+```
+
+Values higher than 0 indicate relative depletion in Ecdysozoa (*i.e.*, enrichment in other Bilateria).
+
+
+### Hypothesis 3: The association between genome size and apoptotic repertoire is a phylogenetic artefact. 
+We test for phylogenetic non-independence using PGLS (comparing Brownian Motion to Pagel's lamda models of trait evolution). 
+
+```{r pgls, results="markdown"}
+
+bilat.alldata<-all_OG_counts[,colnames(all_OG_counts) %in% c(deut,loph,ecdy)]
+bilat.alldata<-t(bilat.alldata)
+gsize_og<-rowSums(bilat.alldata)
+gsize_apocount_cor<-c()
+
+library(nlme)
+OGcountTotals<-colSums(all_OG_counts)[tree$tip.label]
+ApoptosisCounts<-rowSums(t_chars_reorder[tree$tip.label,])
+dat4pgls<-data.frame(cbind(OGcountTotals,ApoptosisCounts))
+
+gls_BM<-gls(ApoptosisCounts~OGcountTotals, data=dat4pgls, correlation=corBrownian(1,tree))
+cat("PGLS for relationship between genome size (total OG counts) and apoptotic repertoire using Brownian Motion")
+summary(gls_BM)
+
+gls_PagelL<-gls(ApoptosisCounts~OGcountTotals , data=dat4pgls,correlation=corPagel(1,tree))
+cat("PGLS for relationship between genome size (total OG counts) and apoptotic repertoire using Pagel's lambda")
+
+summary(gls_PagelL)
+summary(gls_PagelL)$tTable[2,"p-value"]
+lrtest<-function(model1,model2){
+  lik1<-logLik(model1)
+  lik2<-logLik(model2)
+  LR<--2*(lik1-lik2)
+  degf<-attr(lik2,"df")-attr(lik1,"df")
+  P<-pchisq(LR,df=degf,lower.tail=FALSE)
+  cat(paste("Likelihood ratio = ",
+            signif(LR,5),"(df=",degf,") P = ",
+            signif(P,4),"\n",sep=""))
+  invisible(list(likelihood.ratio=LR,p=P))
+}
+
+## run likelihood-ratio test
+cat("LRT to compare Brownian to Pagel's")
+lrtest(gls_BM,gls_PagelL)
+
+cat("Phylogenetic signal in apoptotic repertoire size (Blomberg's K):")
+phylosig(tree,ApoptosisCounts,method="K")
+cat("Phylogenetic signal in apoptotic repertoire size (Pagel's lamda):")
+phylosig(tree,ApoptosisCounts,method="lambda")
+
+
+ library(phylosignal)
+library(phylobase)
+p4d<-phylo4d(tree,dat4pgls[,1:2])
+barplot(p4d,trait.bg.col=c(scales::alpha("black",0.5),scales::alpha("red",0.5))  )
+dotplot(p4d,trait.bg.col=c(scales::alpha("black",0.5),scales::alpha("red",0.5))  )
+gridplot(p4d)
+
+```
+
+A signficant association between genome size and KEGG apoptosis repertoire persists after correction for phylogeny (p= `r summary(gls_PagelL)$tTable[2,"p-value"]`.
+
+### Hypothesis 4: p53 domain complexity is associated with apoptotic repertoire
+Reduced p53 complexity/functionaliy in the nonscalidophoran ecdysozoans is correlated with reduced diversity and richness of apoptotic gene families. 
+
+```{r p53data}
+#library(colorspace); rainbow_hcl(4)  #optional package to pick nice palettes
+p53dcols<-c("#1b9e77", "#d95f02", "#7570b3", "#e7298a", "lightblue") # 5 colors for 5 domains
+#library(scales); show_col(p53dcols)
+p53tr<-ape::ladderize(ape::read.tree("inputs/p53domain.tre"))
+
+mydata<-read.csv("inputs/p53domains.csv", stringsAsFactors=TRUE,header=T,row.names=1)
+mydata<-mydata[p53tr$tip.label,c("TAD","p53","TET","SAM1","SAM2")]	
+
+# plot domain states
+ape::plot.phylo(p53tr, no.margin=T,show.tip.label=T, use.edge.length=F, cex=0.5, main="p53 domains", node.depth = 0.01, label.offset=2.5)
+offset<-seq(1,2,by=0.25)
+
+for (d in 1:ncol(mydata)){
+tips1<-which(mydata[p53tr$tip.label,colnames(mydata)[d]]==1); tips0<-which(mydata[p53tr$tip.label,colnames(mydata)[d]]==0)
+tiplabels(tip=tips1,pch=16,col=p53dcols[d], cex=1.2, adj=offset[d])
+tiplabels(tip=tips0,pch=1,col="snow3", cex=1.2, adj=offset[d]) #gray unfilled symbol for empties
+}
+
+#summarize p53 domain richness by species
+L1<-strsplit(rownames(mydata),split="_")
+sp<-unlist(lapply(L1, function(x) x[1]))
+mydata<-cbind(mydata,sp)
+library(reshape2)
+melt<-melt(mydata); colnames(melt)<-c("sp","domain","present")
+library(plyr)
+p53sumdata <- ddply(melt, c("sp", "domain"), summarise,total = sum(present))
+p53sumdata<-acast(p53sumdata,sp~domain)
+missing<-tree$tip.label[!(tree$tip.label %in% rownames(p53sumdata))]
+
+#manually adding in holozoan domain data (same domain orders):
+
+Salpdomains<-c(0,1,0,1,1)
+Monodomains<-c(0,1,0,0,0)
+Mndomains<-c(0,1,0,0,0)
+Amphdomains<-c(0,1,0,0,1)
+Nematdomains<-c(0,3,1,0,0)
+Hyddomains<-c(0,2,0,0,0)
+Tricdomains<-c(0,3,1,0,1)
+
+dat2<-rbind(Salpdomains,Monodomains,Mndomains,Amphdomains,Nematdomains,Hyddomains,Tricdomains)
+rownames(dat2)<-c("Salpingoeca","Monosiga","Mnemiopsis","Amphimedon","Nematostella","Hydra","Trichoplax")
+p53sumdata<-data.frame(rbind(p53sumdata,dat2))
+
+
+#pool SAM1 + SAM2 counts into single 'SAM' column
+SAM<-p53sumdata$SAM1+p53sumdata$SAM2
+p53sumdata<-cbind(p53sumdata[,1:3],SAM)
+p53sumdata<-p53sumdata[tree$tip.label,]
+
+utr<-tree #save timetree to use in later chunk
+
+```
+
+#### p53 domain richness on metazoan tree
+Reconstruct domain ancestral states using Dollo parsimony.
+
+```{r p53dollo}
+
+p53sumdata<-p53sumdata[tree$tip.label,]
+phylo.heatmap(tree, p53sumdata, length=10, standardize = F,fsize=0.5)
+title("Domain richness in p53 genes across animal genomes")
+
+#select set of genes to analyse
+tree<-ladderize(read.nexus("inputs/spp3.nex")) # phylogram, equal branchlengths
+p53sumdata<-p53sumdata[tree$tip.label,]
+
+nodelabelsize<-2
+offset<-seq(1,3,by=0.6)
+#offset<-seq(1,4,by=0.75)
+tree$root.edge<-max(offset)
+plot(tree, label.offset=max(offset)+0.5,root.edge=T)
+
+
+#setup frame to store results
+anc.p53.states<-as.data.frame(matrix(NA,ncol=ncol(p53sumdata),nrow=Nnode(tree)))
+colnames(anc.p53.states)<-colnames(p53sumdata)
+for (og in 1:ncol(p53sumdata))
+{
+ char<-p53sumdata[tree$tip.label,og]
+names(char)<-row.names(p53sumdata) #added names
+tiplabels(tip=which(tree$tip.label %in% tree$tip.label[char==0]),col="snow3",pch=16,adj=offset[og],cex=nodelabelsize)
+tiplabels(tip=which(tree$tip.label %in% tree$tip.label[char>0]),col=p53dcols[og],pch=16,adj=offset[og],cex=nodelabelsize)
+
+#Dollo step1: establish list of tips with Present state
+present.tips<-which(tree$tip.label %in% names(which(char>0))) #char is already matching tree tip.label order
+anc.nodes<-c()
+
+
+for (dec in 1:length(present.tips)){
+#Dollo step 2: determine youngest nodes subtending Present tips
+ parentnode<-tree$edge[which(tree$edge[,2]==present.tips[dec]),1]
+ anc.nodes<-c(anc.nodes,parentnode)
+}
+anc.nodes<-unique(anc.nodes)
+nodelabels(node=anc.nodes,pch=16,col=p53dcols[og],adj=offset[og]-2,cex=nodelabelsize)
+
+# Dollo step 3: For the remaining, yet-undetermined nodes: save as Present IF there are both older AND younger nodes saved as Present. Any MRCA between Present nodes must also be a Present.
+
+# capture descendents (nodes+tips) for each node
+descs<-phangorn::allDescendants(x=tree)
+
+# create list of undetermined nodes by using the parent nodes of just-determined (step2) Present nodes to subset the whole tree's internal nodes and retain only those internal nodes representing a MRCA to Present nodes
+intnodes<-unique(tree$edge[,1])
+nextnodeup<-unique(tree$edge[which(tree$edge[,2] %in% anc.nodes),1])
+rem_intnodes<-intnodes[intnodes>=min(nextnodeup)]
+
+# ensure root is excluded for now (later, explicitly check if outgroup descendents are Present before saving root as Present)
+root.node<-Ntip(tree)+1
+rem_intnodes<-rem_intnodes[!(rem_intnodes %in% root.node)]
+
+#changed #for the node preceeding the last certain Present node, check if it has one absent descendent tip, if so exclude this node from next step
+if(all(phangorn::Descendants(tree,min(rem_intnodes),"children") %in% c(present.tips,anc.nodes))==FALSE)
+  {rem_intnodes<-rem_intnodes[!(rem_intnodes %in% min(rem_intnodes))]
+}
+
+
+# save these undetermined nodes as Present if any of their descendents are Present
+for (n in unique(rem_intnodes)){
+  if (any(present.tips %in% unlist(descs[n]))){ anc.nodes<-c(anc.nodes,n)}
+}
+anc.nodes<-unique(anc.nodes)
+nodelabels(node=anc.nodes,pch=16,col=p53dcols[og],adj=offset[og]-2,cex=nodelabelsize)
+
+# Dollo step 4: check if the deepest MRCAs between Present descendents hasn't been captured as Present
+ti<-c(unlist(descs[min(anc.nodes)]),unlist(descs[max(anc.nodes)])) 
+tips<-tree$tip.label[ti [ti<= Ntip(tree)]]
+mrca1<-getMRCA(tree,tips)
+ if (any(present.tips %in% unlist(descs[mrca1]))){ anc.nodes<-c(anc.nodes,mrca1)}
+nodelabels(node=anc.nodes,pch=16,col=p53dcols[og],adj=offset[og]-2,cex=nodelabelsize)
+
+#if there are intermediate nodes between mrca-present and presnet-nodes, add to present list
+#overlap of getDescendents and getAncesotrs(of present nodes)
+for (n in anc.nodes){
+  ancs.tmp<-phangorn::Ancestors(x=tree,node=n)
+ anc.nodes<-c(anc.nodes,ancs.tmp [ancs.tmp %in% unlist(descs[mrca1])])
+}
+anc.nodes<-unique(anc.nodes)
+nodelabels(node=anc.nodes,pch=16,col=p53dcols[og],adj=offset[og]-2,cex=nodelabelsize)
+
+# Dollo step 5: if both of the desendent nodes of the root are in the Present node list, add root to list
+rootchildren<-tree$edge[tree$edge[,1]==root.node,2]
+if (any(present.tips %in% unlist(descs[rootchildren[21]])) & any(present.tips %in% unlist(descs[rootchildren[2]]))){ anc.nodes<-c(anc.nodes,root.node)}
+
+# save results in table
+presnodes<-anc.nodes-Ntip(tree)
+absnodes<-unique(sort(tree$edge[,1]))[!(unique(sort(tree$edge[,1])) %in% anc.nodes)]-Ntip(tree)
+nodelabels(node=absnodes+Ntip(tree),pch=16,col="snow3",adj=offset[og]-2,cex=nodelabelsize)
+anc.p53.states[ presnodes,og]<-"present"
+anc.p53.states[absnodes,og]<-"absent"
+anc.p53.states[,og]
+}
+
+tree<-utr #restore timetree for later code
+```
+
+#### p53 domains vs apoptosis repertoire
+Use canonical correspondence analysis (CCA) to test overall association bewteen p53 richness (ie, numbers of each domain in a genome) and apoptotic gene richness (numbers of genes belonging to each Apoptosis OG). Using CCA over multiple regression is preferred here as there are multicollinear variables in both the predictor and response datasets (not shown, but evident for the domains in the highly orthogonal red lines in CCA plot).
+```{r cca_p53,results="markdown"}
+subApo<-t_chars_reorder[rownames(p53sumdata),]
+
+library(vegan)
+
+predictors<-data.frame(p53sumdata)
+response<-data.frame(sigOGs[rownames(p53sumdata),])
+
+ccamod<-cca(response ~ ., predictors)
+plot(ccamod); #text(ccamod,display="sites")
+title("CCA biplot of p53 domain richness vs apoptotic richness")
+finalmodel<- ordistep(ccamod, scope=formula(ccamod))
+#vif.cca(finalmodel)
+anova(finalmodel)
+#anova(ccamod, by="axis")
+
+#go though and test effect of each p53 domain on apo richness
+dat<-(as.matrix(response[,1:2]))
+manova1<-lm(as.matrix(response) ~ ., data=predictors)
+
+#extract pvalue and Fstatistic for multiple regression model
+f <- summary.lm(manova1)$fstatistic
+manova1.p <- format(pf(f[1],f[2],f[3],lower.tail=F),scientific = F); attributes(manova1.p) <- NULL
+  
+manova.res<-matrix(NA,nrow=length(summary.aov(manova1)),ncol=ncol(predictors)); dimnames(manova.res)<-list(colnames(response),colnames(predictors))
+for (i in 1:length(summary.aov(manova1))){
+  for (j in 1:ncol(predictors)){
+manova.res[i,j]<-(summary.aov(manova1)[i])[[1]][colnames(predictors)[j],"Pr(>F)"]
+  }}
+#pvalues from multiple regression: effect of each domain on apop gene richness
+cat("pvalues (uncorrected) for apop richness ~ p53 domain richness")
+round(manova.res,2)
+
+#####
+#repeat with binarized data (ie domain presence/absence)
+predictors01<-predictors
+predictors01[predictors01>0]<-1; #drop p53 because invariant, present in all
+predictors01<-subset(predictors01,select=-c(p53))
+
+ccamod<-cca(response ~ ., predictors01)
+plot(ccamod); #text(ccamod,display="sites")
+title("CCA biplot of p53 domain presence vs apoptotic richness")
+finalmodel<- ordistep(ccamod, scope=formula(ccamod))
+anova(finalmodel)
+
+anova(finalmodel,by="terms")
+anova(finalmodel,by="axis")
+
+aov01.res<-matrix(NA,nrow=ncol(response),ncol=ncol(predictors01),dimnames=list(colnames(response),colnames(predictors01))); 
+for (r in 1:ncol(response)){
+for (c in 1:ncol(predictors01)){
+  aov1<-aov(response[,r] ~ as.factor(predictors01[,c]))
+aov01.res[r,c]<-summary(aov1)[[1]][,"Pr(>F)"][1]
+}}
+
+#pvalues from multiple regression: effect of each domain on apop gene richness
+cat("pvalues (uncorrected) for apop richness ~ p53 domain presence")
+round(aov01.res,2)
+
+```
+
+Multiple regression model indicates that p53 domain **richness** predicts ~`r summary.lm(manova1)$adj.r.squared*100`% of the variation observed in apoptotic gene richness (p-value: `r manova1.p`).  This could be confounded by genome size overall.
+
+
+#### Test whether **richness** (ie, number) of any p53 domains is correlated with larger Apoptosis gene families for each of signficant OGs detected in Hypothesis 1a.
+Using PGLS to test relationship while accounting for phylogeny and genome size. Red signfies p<0.05 under GLS using Brownian Motion as correlate and with total domain counts and total OG counts across genome as model terms.
+
+```{r pgls_p53}
+pgls.corr.p<-matrix(NA,ncol=ncol(manova.res),nrow=nrow(manova.res),dimnames=dimnames(manova.res))
+predictors<-data.frame(predictors[tree$tip.label,])
+      response<-data.frame(response[tree$tip.label,])
+#for signfic associations, correct for phylo with pgls;
+for (i in 1:nrow(manova.res)){
+  for (j in 1:ncol(manova.res)){
+      #including genome size as covariate
+      dat4pgls2<-data.frame(cbind(predictors[,j],response[,i]),colSums(all_OG_counts)[tree$tip.label]); colnames(dat4pgls2)<-c("X1","X2","genome")
+rownames(dat4pgls2)<-tree$tip.label; 
+     #first using ape
+gls_BM<-gls(X2~X1+genome, data=dat4pgls2, correlation=corBrownian(1,tree))
+#summary(gls_BM)
+
+#gls_PagelL<-gls(X1~X2, data=dat4pgls2,correlation=corPagel(1,tree))
+#cat("PGLS for relationship between p53 domain richness and an apoptotic OG's richness using Pagel's lambda")
+#summary(gls_PagelL)
+## run likelihood-ratio test
+#cat("LRT to compare Brownian to Pagel's")
+#lrtest(gls_BM,gls_PagelL)
+
+ pgls.corr.p[i,j]<-summary(gls_BM)[18][[1]][2,"p-value"]
+      
+   # }
+  }}
+
+library(gplots)
+#to display 2 signif levels
+cols<-c("red","black")
+my_palette <- colorRampPalette(rev(cols))(n = 299)
+# (optional) defines the color breaks manually for a "skewed" color transition
+col_breaks = c(seq(0,0.05,length=1),  # for red
+  seq(0.051,1,length=2))             # for black
+
+heatmap.2(pgls.corr.p[order(rownames(pgls.corr.p)),],col=cols,dendrogram="none",Rowv=F,Colv=F,key=T,scale="none",density.info="none",trace="none",breaks=col_breaks,cexRow=0.5,lhei=c(1,4),srtCol=0,adjCol = c(0.5,1))
+       title("Apoptotic OG richness associated \nwith richness of p53 domains")
+```
+
+```{r pgls_p53_nonsig}
+predictors<-data.frame(predictors[tree$tip.label,])
+response<-data.frame(t_chars_reorder[tree$tip.label,])
+pgls.corr.pnon<-matrix(NA,ncol=ncol(manova.res),nrow=ncol(response),dimnames=list(colnames(response),colnames(manova.res)))
+
+for (i in 1:ncol(response)){ #response OGs
+  for (j in 1:ncol(predictors)){ #predictor domains
+dat4pgls2<-data.frame(cbind(predictors[,j],response[,i]),colSums(all_OG_counts)[tree$tip.label]); colnames(dat4pgls2)<-c("X1","X2","genome")
+rownames(dat4pgls2)<-tree$tip.label; 
+gls_BM<-gls(X2~X1+genome, data=dat4pgls2, correlation=corBrownian(1,tree))
+pgls.corr.pnon[i,j]<-summary(gls_BM)[18][[1]][2,"p-value"]
+  }}       
+#organize rows so heatmap is divided into genes that are signif for 1a and the rest     
+nonsig1a<-colnames(response)[!(colnames(response) %in% colnames(sig1a))]
+nonsig1a<-nonsig1a[order(nonsig1a)]
+
+heatmap.2(pgls.corr.pnon[nonsig1a,],col=cols,dendrogram="none",Rowv=F,Colv=F,key=F,scale="none",density.info="none",trace="none",breaks=col_breaks,cexRow=0.5,lhei=c(1,20),srtCol=0,adjCol = c(0.5,1))
+title("Non-signif Apoptotic OG richness associated with \npresence of p53 domains")
+
+heatmap.2(pgls.corr.pnon[order(rownames(pgls.corr.pnon)),],col=cols,dendrogram="none",Rowv=F,Colv=F,key=F,scale="none",density.info="none",trace="none",breaks=col_breaks,cexRow=0.5,lhei=c(1,20),srtCol=0,adjCol = c(0.5,1))
+title("KEGG Apoptotic OG richness associated with \npresence of p53 domains")
+
+#compare sig OGs to non-sig OGs: PGLS results
+propinsig<-length(which(pgls.corr.pnon[nonsig1a,] <0.05))/length(pgls.corr.pnon[nonsig1a,])
+propsig<-length(which(pgls.corr.p <0.05))/length(pgls.corr.p)
+
+#chi sq note different data set up: giving successes and total counts of trials
+domainX<-prop.test(x=c(length(which(pgls.corr.p <0.05)),length(which(pgls.corr.pnon[nonsig1a,] <0.05))),n=c(length(pgls.corr.p),length(pgls.corr.pnon[nonsig1a,])))
+
+nonsig_sig<-apply(pgls.corr.pnon[nonsig1a,],1,function(x) any(x<0.05))
+sig1a_sig<-apply(pgls.corr.p,1,function(x) any(x<0.05))
+
+
+#FDR correction
+pgls.corr.pnonF<-apply(pgls.corr.pnon,2, function(x) p.adjust(x,method="fdr"))
+pgls.corr.pF<-apply(pgls.corr.p,2, function(x) p.adjust(x,method="fdr"))
+propinsigF<-length(which(pgls.corr.pnonF[nonsig1a,] <0.05))/length(pgls.corr.pnonF[nonsig1a,])
+propsigF<-length(which(pgls.corr.pF <0.05))/length(pgls.corr.pF)
+
+```
+
+After accounting for genome size and phylogeny, is the size (number of gene counts) of OGs that are differentially-enriched (ie, depleted) in Edysozoans are NOT more likely to be affected by numbers of p53 domains than other non-depeleted OGs?
+
+($\\X^2$ = `r domainX$statistic`, p= `r domainX$p.value`). 
+
+Of the `r length(sig1a_sig)` DE genes and the `r ncol(pgls.corr.p)` domains, `r length(which(sig1a_sig==TRUE))` are signficantly associated with the numbers of at least one domain under PGLS (`r round(length(which(sig1a_sig==TRUE))/length(sig1a_sig),2)*100`%). Whereas `r length(which(nonsig_sig==TRUE))` of the `r length(nonsig_sig)` non-DE OGs show association (`r round(length(which(nonsig_sig==TRUE))/length(nonsig_sig),2)*100`%).
+
+
+#### Test if **presence** of any p53 domains is correlated with larger Apoptosis gene families for each of signficant OGs detected in Hypothesis 1a.
+Using PGLS to test relationship while accounting for phylogeny and genome size. Red signfies p<0.05 under GLS using Brownian Motion as correlate and with domain presence and total OG counts across genome as model terms.
+
+```{r pgls_p53presence}
+#with binarized data
+pgls.corr.p2<-matrix(NA,ncol=ncol(aov01.res),nrow=nrow(aov01.res),dimnames=dimnames(aov01.res))
+predictors<-data.frame(predictors01[tree$tip.label,])
+      response<-data.frame(response[tree$tip.label,])
+for (i in 1:nrow(aov01.res)){
+  for (j in 1:ncol(aov01.res)){
+ dat4pgls2<-data.frame(cbind(predictors[,j],response[,i]),colSums(all_OG_counts)[tree$tip.label]); colnames(dat4pgls2)<-c("X1","X2","genome")
+rownames(dat4pgls2)<-tree$tip.label; 
+gls_BM<-gls(X2~X1+genome, data=dat4pgls2, correlation=corBrownian(1,tree))
+ pgls.corr.p2[i,j]<-summary(gls_BM)[18][[1]][2,"p-value"]
+  }}       
+      
+heatmap.2(pgls.corr.p2[order(rownames(pgls.corr.p2)),],col=cols,dendrogram="none",Colv=F,Rowv=F,key=F,scale="none",density.info="none",trace="none",breaks=col_breaks,cexRow=0.5,lhei=c(1,8),srtCol=0,adjCol = c(0.5,1))
+title("Signif Apoptotic OG richness associated \nwith presence of p53 domains")
+```
+
+#### Test if **presence** of any p53 domains is correlated with *any* Apoptosis gene family.
+Using PGLS to test relationships with correction for phylogeny. Red signfies p<0.05 (pink is p<0.1) under GLS using Brownian Motion as correlate.
+
+```{r pgls_p53presence_all}
+#with binarized data
+response<-data.frame(t_chars_reorder[rownames(p53sumdata),])
+
+pgls.corr.p3<-matrix(NA,ncol=ncol(aov01.res),nrow=ncol(response),dimnames=list(colnames(response),colnames(aov01.res)))
+predictors<-data.frame(predictors01[tree$tip.label,])
+      response<-data.frame(response[tree$tip.label,])
+for (i in 1:ncol(response)){ #response OGs
+  for (j in 1:ncol(predictors)){ #predictor domains
+
+ dat4pgls2<-data.frame(cbind(predictors[,j],response[,i]),colSums(all_OG_counts)[tree$tip.label]); colnames(dat4pgls2)<-c("X1","X2","genome")
+ rownames(dat4pgls2)<-tree$tip.label; 
+gls_BM<-gls(X2~X1 +genome, data=dat4pgls2, correlation=corBrownian(1,tree))
+
+ pgls.corr.p3[i,j]<-summary(gls_BM)[18][[1]][2,"p-value"]
+
+  }}       
+      
+#organize rows so heatmap is divided into genes that are signif for 1a and the rest     
+nonsig1a<-colnames(response)[!(colnames(response) %in% colnames(sig1a))]
+nonsig1a<-nonsig1a[order(nonsig1a)]
+heatmap.2(pgls.corr.p3[nonsig1a,],col=cols,dendrogram="none",Rowv=F,Colv=F,key=F,scale="none",density.info="none",trace="none",breaks=col_breaks,cexRow=0.5,lhei=c(1,20),srtCol=0,adjCol = c(0.5,1))
+title("Non-signif Apoptotic OG richness associated with \npresence of p53 domains")
+
+
+propinsig<-length(which(pgls.corr.p3[nonsig1a,] <0.05))/length(pgls.corr.p3[nonsig1a,])
+
+propsig<-length(which(pgls.corr.p2 <0.05))/length(pgls.corr.p2)
+
+#chi sq note different data set up: giving successes and total counts of trials
+domainX<-prop.test(x=c(length(which(pgls.corr.p2 <0.05)),length(which(pgls.corr.p3[nonsig1a,] <0.05))),n=c(length(pgls.corr.p2),length(pgls.corr.p3[nonsig1a,])))
+
+nonsig_sig<-apply(pgls.corr.p3[nonsig1a,],1,function(x) any(x<0.05))
+sig1a_sig<-apply(pgls.corr.p2,1,function(x) any(x<0.05))
+
+length(which(nonsig_sig==TRUE))
+length(nonsig_sig)
+length(which(sig1a_sig==TRUE))
+length(sig1a_sig)
+
+```
+
+After accounting for genome size and phylogeny, is the size (number of gene counts) of OGs that are differentially-enriched (ie, depleted) in Edysozoans more likely to be affected by p53 domain presence than other OGs?
+($\\X^2$ = `r domainX$statistic`, p= `r domainX$p.value`). 
+
+Of the `r length(sig1a_sig)` DE genes and the `r ncol(pgls.corr.p2)` domains, `r length(which(sig1a_sig==TRUE))` are signficant with at least one domain presence under PGLS (`r round(length(which(sig1a_sig==TRUE))/length(sig1a_sig),2)*100`%). Whereas `r length(which(nonsig_sig==TRUE))` of the `r length(nonsig_sig)` non-DE OGs show association (`r round(length(which(nonsig_sig==TRUE))/length(nonsig_sig),2)*100`%).
+
+```{r prepare_OGsymbolpvalTable}
+#include domain p-values for all the GG gene symbols
+symbol<-unlist(lapply(strsplit(homo_apo_OGs_acc$gene_acc,"_"),function(x) x[1]))
+homo_apo_OGs_acc<-data.frame(cbind(homo_apo_OGs_acc,symbol))
+tmp<-cbind(rownames(pgls.corr.p3),pgls.corr.p3); colnames(tmp)[1]<-"symbol"
+KEGG_pglsP<-left_join(homo_apo_OGs_acc,as.data.frame(tmp),by='symbol')
+KEGG_pglsP<-KEGG_pglsP[order(KEGG_pglsP$symbol),]
+
+fdrs<-data.frame(cbind(rownames(results1a),results1a$fdr_low_Ecdy,results1a$fdr_high_Ecdy))
+colnames(fdrs)<-c("symbol","E_depletedFDR","E_enrichedFDR")
+KEGG_pglsP2<-left_join(KEGG_pglsP,fdrs,by='symbol')
+write.csv(KEGG_pglsP2,file="symbols_KEGG.domainPGLSpvals.csv")
+
+```
+
+
+
+
